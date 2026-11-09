@@ -51,11 +51,12 @@ test("full session through the UI", async () => {
   // ---- fake browser ----
   const store = {};
   const handlers = {};
-  const app = { innerHTML: "", addEventListener: (t, fn) => { handlers[t] = fn; }, contains: () => false };
+  const docHandlers = {};
+  const app ={ innerHTML: "", addEventListener: (t, fn) => { handlers[t] = fn; }, contains: () => false };
   const toastEl = { hidden: true, className: "", textContent: "" };
   global.document = {
     getElementById: (id) => (id === "app" ? app : toastEl),
-    addEventListener() {}, hidden: false, activeElement: null,
+    addEventListener: (t, fn) => { docHandlers[t] = fn; }, hidden: false, activeElement: null,
     createElement: () => ({ click() {}, remove() {} }), body: { appendChild() {} }
   };
   global.window = { scrollTo() {}, confirm: () => true };
@@ -72,8 +73,8 @@ test("full session through the UI", async () => {
   require("../js/app.js");
   const tick = () => new Promise((r) => setTimeout(r, 15));
 
-  const click = (dataset, tag) => {
-    const el = { tagName: tag || "BUTTON", dataset };
+  const click = (dataset, tag, form) => {
+    const el = { tagName: tag || "BUTTON", dataset, closest: () => form || null };
     handlers.click({ target: { closest: (sel) => (sel === "[data-action]" ? el : null) } });
   };
   const submit = (dataset, extra) => {
@@ -105,11 +106,49 @@ test("full session through the UI", async () => {
   assert.match(app.innerHTML, /🪙 100/);
   assert.equal(user().tokens, 100);
 
-  // place a bet on the Clasico (match 1)
+  // the match list has Bet Now buttons, no score boxes and no popup
+  assert.match(app.innerHTML, /Bet Now/);
+  assert.doesNotMatch(app.innerHTML, /name="h"/);
+  assert.doesNotMatch(app.innerHTML, /role="dialog"/);
+  assert.match(app.innerHTML, /class="crest ph"/); // teams without a crest get a badge
+
+  // Bet Now opens the popup for the Clasico (match 1)
+  click({ action: "open-bet", comp: "PD", match: "1" });
+  assert.match(app.innerHTML, /role="dialog"/);
+  assert.match(app.innerHTML, /Place your bet/);
+  assert.match(app.innerHTML, /High stakes: El Clasico/);
+  assert.match(app.innerHTML, /name="stake" value="10" checked/);
+
+  // the + and - buttons change the goal box, never below 0
+  const stepForm = { elements: { h: { value: "0" } } };
+  click({ action: "step", target: "h", delta: "1" }, "BUTTON", stepForm);
+  assert.equal(stepForm.elements.h.value, 1);
+  click({ action: "step", target: "h", delta: "-1" }, "BUTTON", stepForm);
+  click({ action: "step", target: "h", delta: "-1" }, "BUTTON", stepForm);
+  assert.equal(stepForm.elements.h.value, 0);
+
+  // the popup closes with the Close button and with Escape
+  click({ action: "close-modal" });
+  assert.doesNotMatch(app.innerHTML, /role="dialog"/);
+  click({ action: "open-bet", comp: "PD", match: "1" });
+  docHandlers.keydown({ key: "Escape" });
+  assert.doesNotMatch(app.innerHTML, /role="dialog"/);
+
+  // place the bet from the popup
+  click({ action: "open-bet", comp: "PD", match: "1" });
   submit({ form: "bet", comp: "PD", match: "1" }, { elements: { h: { value: "2" }, a: { value: "1" }, stake: { value: "20" } } });
   assert.equal(user().tokens, 80);
+  assert.doesNotMatch(app.innerHTML, /role="dialog"/); // popup closes after placing
   assert.match(app.innerHTML, /Your pick: <strong>2–1<\/strong>/);
-  assert.match(app.innerHTML, /Update bet/);
+  assert.match(app.innerHTML, /Change bet/);
+
+  // opening it again shows the existing pick and a cancel button
+  click({ action: "open-bet", comp: "PD", match: "1" });
+  assert.match(app.innerHTML, /Change your bet/);
+  assert.match(app.innerHTML, /Cancel bet/);
+  assert.match(app.innerHTML, /name="h"[^>]*value="2"/);
+  assert.match(app.innerHTML, /name="a"[^>]*value="1"/);
+  click({ action: "close-modal" });
 
   // blank score is refused, nothing changes
   submit({ form: "bet", comp: "PD", match: "2" }, { elements: { h: { value: "" }, a: { value: "1" }, stake: { value: "5" } } });
@@ -188,6 +227,6 @@ test("full session through the UI", async () => {
   assert.doesNotMatch(app.innerHTML, /<script/i);
   click({ action: "login-as", nick: "evil" });
   click({ action: "tab", tab: "bets" });
-  assert.doesNotMatch(app.innerHTML, /<script|<img|<b>H|<i>A/i);
+  assert.doesNotMatch(app.innerHTML, /<script|<img src=x|<b>H|<i>A/i);
   assert.match(app.innerHTML, /&lt;b&gt;H&lt;\/b&gt;/);
 });

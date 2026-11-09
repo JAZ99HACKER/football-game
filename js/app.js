@@ -20,6 +20,7 @@
     tab: "matches",
     comp: null,
     more: {},
+    modal: null,   // { comp, matchId } while the bet popup is open
     storageOk: true,
     lastLoad: 0
   };
@@ -45,6 +46,9 @@
   function keyOf(nick) { return nick.trim().toLowerCase(); }
   function U() { return S.nick ? S.users[S.nick] : null; }
   function cls(n) { return n > 0 ? "pos" : n < 0 ? "neg" : ""; }
+  function ball(extra) {
+    return '<img class="ball' + (extra ? " " + extra : "") + '" src="img/ball.svg" alt="" aria-hidden="true">';
+  }
 
   var STAGES = {
     LEAGUE_STAGE: "League stage", GROUP_STAGE: "Group stage", PLAYOFFS: "Play-offs", LAST_32: "Round of 32",
@@ -122,7 +126,7 @@
         var on = c !== "WC" ? "checked" : "";
         return '<label class="check"><input type="checkbox" name="league" value="' + esc(c) + '" ' + on + "> " + esc(compName(c)) + "</label>";
       }).join("");
-      return '<main class="login card"><h1>Welcome, ' + esc(S.signup) + "!</h1>" +
+      return '<main class="login card"><div class="hero">' + ball("hero-ball") + '<div class="hero-shadow"></div></div><h1>Welcome, ' + esc(S.signup) + "!</h1>" +
         "<p>Pick the leagues you want to play. You can change this later.</p>" +
         '<form data-form="signup"><div class="checks">' + boxes + "</div>" +
         '<p class="hint">The World Cup appears here automatically when its fixtures are about to start.</p>' +
@@ -132,7 +136,7 @@
     var existing = Object.keys(S.users).map(function (k) {
       return '<button class="chip" data-action="login-as" data-nick="' + esc(k) + '">' + esc(S.users[k].nick) + "</button>";
     }).join("");
-    return '<main class="login card"><h1>Football Prediction Game</h1>' +
+    return '<main class="login card"><div class="hero">' + ball("hero-ball") + '<div class="hero-shadow"></div></div><h1>Football Prediction Game</h1>' +
       "<p>Predict scores, stake game tokens and see how sharp you are. Tokens are for fun only: no real money.</p>" +
       '<form data-form="login"><label class="field" for="nick">Choose a nickname (2 to 20 letters or numbers)</label>' +
       '<input id="nick" name="nick" type="text" maxlength="20" autocomplete="off" required>' +
@@ -143,12 +147,12 @@
   }
 
   function renderHeader(u) {
-    var tabs = [["matches", "Matches"], ["winner", "Season winner"], ["bets", "My bets"], ["stats", "Stats"]];
-    return '<header class="topbar"><div class="brand">⚽ Football Prediction Game</div>' +
+    var tabs = [["matches", "⚽", "Matches"], ["winner", "🏆", "Season winner"], ["bets", "🎟️", "My bets"], ["stats", "📊", "Stats"]];
+    return '<header class="topbar"><div class="brand">' + ball() + "<span>Football Prediction Game</span></div>" +
       '<div class="me"><span class="balance" title="Your tokens">🪙 ' + tok(u.tokens) + '</span><span class="who">' + esc(u.nick) +
       '</span><button class="btn ghost" data-action="switch">Switch player</button></div></header>' +
       '<nav class="tabs" role="tablist">' + tabs.map(function (t) {
-        return '<button class="tab" role="tab" aria-selected="' + (S.tab === t[0]) + '" data-action="tab" data-tab="' + t[0] + '">' + t[1] + "</button>";
+        return '<button class="tab" role="tab" aria-selected="' + (S.tab === t[0]) + '" data-action="tab" data-tab="' + t[0] + '"><span class="ti" aria-hidden="true">' + t[1] + '</span> <span class="tl">' + t[2] + "</span></button>";
       }).join("") + "</nav>";
   }
 
@@ -161,7 +165,9 @@
   }
 
   function crest(t) {
-    return t.crest ? '<img class="crest" src="' + esc(t.crest) + '" alt="" loading="lazy" width="26" height="26">' : "";
+    if (t.crest) return '<img class="crest" src="' + esc(t.crest) + '" alt="" loading="lazy" width="30" height="30">';
+    var ini = esc(String(t.tla || t.short || "?").slice(0, 3).toUpperCase());
+    return '<span class="crest ph" aria-hidden="true">' + ini + "</span>";
   }
 
   function findBet(u, comp, matchId) {
@@ -169,30 +175,11 @@
     return null;
   }
 
-  function betForm(u, comp, m, bet, high) {
-    var canAfford = u.tokens + (bet ? bet.stake : 0) >= R.stakes[0];
-    if (!canAfford) return '<p class="hint">Not enough tokens to bet right now.</p>';
-    var def = bet ? bet.stake : (R.stakes.filter(function (s) { return s <= u.tokens; }).indexOf(10) !== -1 ? 10 : R.stakes[0]);
-    var opts = R.stakes.map(function (s) {
-      var disabled = s > u.tokens + (bet ? bet.stake : 0) ? " disabled" : "";
-      return '<option value="' + s + '"' + (s === def ? " selected" : "") + disabled + ">" + s + "</option>";
-    }).join("");
-    return '<form class="betform" data-form="bet" data-comp="' + esc(comp.code) + '" data-match="' + m.id + '">' +
-      '<div class="pick"><input class="goal" type="number" name="h" min="0" max="' + R.maxGoals + '" inputmode="numeric" aria-label="' + esc(m.home.short) + ' goals" value="' + (bet ? bet.pickHome : "") + '">' +
-      '<span>–</span><input class="goal" type="number" name="a" min="0" max="' + R.maxGoals + '" inputmode="numeric" aria-label="' + esc(m.away.short) + ' goals" value="' + (bet ? bet.pickAway : "") + '"></div>' +
-      '<label class="field">Stake<select name="stake">' + opts + "</select></label>" +
-      '<button class="btn" type="submit">' + (bet ? "Update bet" : "Place bet") + "</button>" +
-      (bet ? '<button type="button" class="btn ghost" data-action="cancel-bet" data-bet="' + esc(bet.id) + '">Cancel bet</button>' : "") +
-      '<p class="hint" style="flex-basis:100%">Exact score pays ' + mult(high ? R.multExactHigh : R.multExact) + ", one goal off " + mult(R.multOff1) +
-      ", two off " + mult(R.multOff2) + ", further off loses the stake.</p></form>";
-  }
-
-  function betSummary(bet, m) {
+  function betSummary(bet) {
     var line = 'Your pick: <strong>' + bet.pickHome + "–" + bet.pickAway + "</strong> · stake " + tok(bet.stake) +
       (bet.high ? ' <span class="badge high">' + mult(R.multExactHigh) + " on exact</span>" : "");
     if (bet.status === "settled") {
-      var good = bet.net > 0;
-      line += ' <span class="badge ' + (good ? "win" : bet.net < 0 ? "loss" : "") + '">' + signed(bet.net) + " tokens (" + mult(bet.multiplier) + ")</span>";
+      line += ' <span class="badge ' + (bet.net > 0 ? "win" : bet.net < 0 ? "loss" : "") + '">' + signed(bet.net) + " tokens (" + mult(bet.multiplier) + ")</span>";
     } else if (bet.status === "refunded") {
       line += ' <span class="badge">Refunded</span>';
     }
@@ -201,8 +188,9 @@
 
   function matchCard(u, comp, m, rank) {
     var bet = findBet(u, comp.code, m.id);
+    var openBet = bet && bet.status === "open" ? bet : null;
     var finished = m.status === "FINISHED" && m.score;
-    var reason = (!finished) ? Scoring.highStakesReason(m, comp, rank, R) : null;
+    var reason = finished ? null : Scoring.highStakesReason(m, comp, rank, R);
     var high = bet ? bet.high : !!reason;
     var tags = '<span>' + esc(fmtDate(m.utcDate)) + "</span>";
     var rl = roundLabel(m);
@@ -212,16 +200,72 @@
     if (m.status === "POSTPONED") tags += '<span class="badge loss">Postponed</span>';
     if (m.status === "CANCELLED") tags += '<span class="badge loss">Cancelled</span>';
 
-    var mid = finished ? '<span class="score">' + m.score.home + " – " + m.score.away + "</span>" : '<span class="vs">v</span>';
-    var body = "";
-    if (bet) body += betSummary(bet, m);
-    if (Game.canBet(m, Date.now())) body += betForm(u, comp, m, bet && bet.status === "open" ? bet : null, high);
-    else if (!finished && !bet && (m.home.id == null || m.away.id == null)) body += '<p class="hint">Teams not decided yet.</p>';
-    else if (!finished && !bet && m.status !== "POSTPONED" && m.status !== "CANCELLED") body += '<p class="hint">Betting closed (kickoff has passed).</p>';
+    var mid = finished ? '<span class="score">' + m.score.home + " – " + m.score.away + "</span>" : '<span class="vs">' + ball() + "</span>";
 
-    return '<article class="card match"><div class="meta">' + tags + "</div>" +
+    var foot = "";
+    if (bet) foot += betSummary(bet);
+    if (Game.canBet(m, Date.now())) {
+      var affordable = u.tokens + (openBet ? openBet.stake : 0) >= R.stakes[0];
+      if (!affordable) foot += '<button class="btn bet-btn" disabled>Not enough tokens</button>';
+      else foot += '<button class="btn bet-btn" data-action="open-bet" data-comp="' + esc(comp.code) + '" data-match="' + m.id + '">' +
+        ball("btn-ball") + (openBet ? "Change bet" : "Bet Now") + "</button>";
+    } else if (!finished && (m.home.id == null || m.away.id == null)) {
+      foot += '<p class="hint">Teams not decided yet.</p>';
+    } else if (!finished && m.status !== "POSTPONED" && m.status !== "CANCELLED") {
+      foot += '<button class="btn bet-btn" disabled>Betting closed</button>';
+    }
+
+    return '<article class="card match' + (high ? " high" : "") + '"><div class="meta">' + tags + "</div>" +
       '<div class="teams"><div class="team">' + crest(m.home) + "<span>" + esc(m.home.name || "TBD") + "</span></div>" + mid +
-      '<div class="team right"><span>' + esc(m.away.name || "TBD") + "</span>" + crest(m.away) + "</div></div>" + body + "</article>";
+      '<div class="team right"><span>' + esc(m.away.name || "TBD") + "</span>" + crest(m.away) + "</div></div>" +
+      (foot ? '<div class="match-foot">' + foot + "</div>" : "") + "</article>";
+  }
+
+  // The popup where a player enters a score and a stake.
+  function betModal(u) {
+    var ref = S.modal;
+    var comp = S.data.competitions[ref.comp];
+    var m = comp ? Game.findMatch(S.data, ref.comp, ref.matchId) : null;
+    var open = '<div class="modal"><div class="backdrop" data-action="close-modal"></div>' +
+      '<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="bet-title" tabindex="-1">' +
+      '<button class="x" data-action="close-modal" aria-label="Close">×</button>';
+    if (!m || !Game.canBet(m, Date.now())) {
+      return open + '<h2 id="bet-title">Betting closed</h2><p class="muted">This match is no longer open for bets.</p>' +
+        '<button class="btn" data-action="close-modal">Close</button></div></div>';
+    }
+    var bet = findBet(u, ref.comp, m.id);
+    var openBet = bet && bet.status === "open" ? bet : null;
+    var reason = Scoring.highStakesReason(m, comp, Scoring.rankMap(comp), R);
+    var high = openBet ? openBet.high : !!reason;
+    var avail = u.tokens + (openBet ? openBet.stake : 0);
+    var def = openBet ? openBet.stake : (avail >= 10 ? 10 : R.stakes[0]);
+
+    function stepper(name, label, val) {
+      return '<div class="stepper"><button type="button" class="step" data-action="step" data-target="' + name + '" data-delta="-1" aria-label="One less goal for ' + esc(label) + '">−</button>' +
+        '<input class="goal" type="number" name="' + name + '" min="0" max="' + R.maxGoals + '" inputmode="numeric" aria-label="' + esc(label) + ' goals" value="' + val + '">' +
+        '<button type="button" class="step" data-action="step" data-target="' + name + '" data-delta="1" aria-label="One more goal for ' + esc(label) + '">+</button></div>';
+    }
+    var chips = R.stakes.map(function (s) {
+      return '<label class="stakechip"><input type="radio" name="stake" value="' + s + '"' + (s === def ? " checked" : "") + (s > avail ? " disabled" : "") + "><span>" + s + "</span></label>";
+    }).join("");
+
+    var meta = "<span>" + esc(fmtDate(m.utcDate)) + "</span>";
+    var rl = roundLabel(m);
+    if (rl) meta += '<span class="badge">' + esc(rl) + "</span>";
+    if (high) meta += '<span class="badge high">★ High stakes' + ((openBet && openBet.highReason) || reason ? ": " + esc((openBet && openBet.highReason) || reason) : "") + "</span>";
+
+    return open + '<h2 id="bet-title">' + (openBet ? "Change your bet" : "Place your bet") + "</h2>" +
+      '<div class="dlg-meta">' + meta + "<span>You have " + tok(u.tokens) + " tokens</span></div>" +
+      '<form data-form="bet" data-comp="' + esc(ref.comp) + '" data-match="' + m.id + '">' +
+      '<div class="sb"><div class="sb-col"><div class="sb-team">' + crest(m.home) + "<span>" + esc(m.home.name) + "</span></div>" + stepper("h", m.home.short || m.home.name, openBet ? openBet.pickHome : 0) + "</div>" +
+      '<div class="sb-dash">–</div>' +
+      '<div class="sb-col"><div class="sb-team">' + crest(m.away) + "<span>" + esc(m.away.name) + "</span></div>" + stepper("a", m.away.short || m.away.name, openBet ? openBet.pickAway : 0) + "</div></div>" +
+      '<p class="stakes-label">Choose your stake (tokens)</p><div class="stakes">' + chips + "</div>" +
+      '<div class="payouts"><span class="badge">Exact score <b>' + mult(high ? R.multExactHigh : R.multExact) + '</b></span><span class="badge">1 goal off <b>' + mult(R.multOff1) +
+      '</b></span><span class="badge">2 goals off <b>' + mult(R.multOff2) + '</b></span><span class="badge">Further off <b>lose stake</b></span></div>' +
+      '<div class="row"><button class="btn" type="submit">' + ball("btn-ball") + (openBet ? "Update bet" : "Place bet") + "</button>" +
+      (openBet ? '<button type="button" class="btn danger" data-action="cancel-bet" data-bet="' + esc(openBet.id) + '">Cancel bet</button>' : "") +
+      '<button type="button" class="btn ghost" data-action="close-modal">Close</button></div></form></div></div>';
   }
 
   function renderMatches(u) {
@@ -378,11 +422,16 @@
 
   function render() {
     var u = U();
-    $app.innerHTML = u ? renderGame(u) : renderLogin();
+    $app.innerHTML = u ? renderGame(u) + (S.modal ? betModal(u) : "") : renderLogin();
+    if (S.modal && $app.querySelector) {
+      // focus the popup itself (not a score box), so phones don't pop the keyboard up over it
+      var dlg = $app.querySelector(".dialog");
+      if (dlg && dlg.focus) dlg.focus();
+    }
   }
 
   // ---------- actions ----------
-  function afterLogin() { S.tab = "matches"; S.comp = null; save(); sync(); render(); window.scrollTo(0, 0); }
+  function afterLogin() { S.tab = "matches"; S.comp = null; S.modal = null; save(); sync(); render(); window.scrollTo(0, 0); }
 
   function guarded(fn) {
     try { fn(); } catch (err) { toast(err.message, "error"); }
@@ -392,14 +441,25 @@
     var el = e.target.closest("[data-action]");
     if (!el || el.tagName === "INPUT") return;
     var a = el.dataset.action, u = U();
-    if (a === "login-as") { S.nick = el.dataset.nick; afterLogin(); }
+    if (a === "open-bet") { S.modal = { comp: el.dataset.comp, matchId: Number(el.dataset.match) }; render(); }
+    else if (a === "close-modal") { S.modal = null; render(); }
+    else if (a === "step") {
+      var form = el.closest("form");
+      var input = form && form.elements[el.dataset.target];
+      if (input) {
+        var cur = parseInt(input.value, 10);
+        if (isNaN(cur)) cur = 0;
+        input.value = Math.max(0, Math.min(R.maxGoals, cur + Number(el.dataset.delta)));
+      }
+    }
+    else if (a === "login-as") { S.nick = el.dataset.nick; afterLogin(); }
     else if (a === "signup-back") { S.signup = null; render(); }
-    else if (a === "switch") { S.nick = null; save(); render(); }
+    else if (a === "switch") { S.nick = null; S.modal = null; save(); render(); }
     else if (a === "tab") { S.tab = el.dataset.tab; render(); window.scrollTo(0, 0); }
     else if (a === "comp") { S.comp = el.dataset.comp; render(); }
     else if (a === "more") { S.more[S.comp] = (S.more[S.comp] || STEP) + STEP; render(); }
     else if (a === "cancel-bet") {
-      guarded(function () { Game.cancelMatchBet(u, S.data, el.dataset.bet, Date.now()); save(); render(); toast("Bet cancelled and stake refunded."); });
+      guarded(function () { Game.cancelMatchBet(u, S.data, el.dataset.bet, Date.now()); S.modal = null; save(); render(); toast("Bet cancelled and stake refunded."); });
     } else if (a === "export") {
       var blob = new Blob([Game.exportAll(S.users)], { type: "application/json" });
       var link = document.createElement("a");
@@ -462,7 +522,7 @@
         var bet = Game.placeMatchBet(u, S.data, {
           comp: f.dataset.comp, matchId: Number(f.dataset.match), pickHome: Number(hv), pickAway: Number(av), stake: Number(f.elements.stake.value)
         }, Date.now());
-        save(); render();
+        S.modal = null; save(); render();
         toast("Bet placed: " + bet.home + " " + bet.pickHome + "–" + bet.pickAway + " " + bet.away + ", stake " + bet.stake + (bet.high ? " (high stakes)." : "."));
       });
     } else if (kind === "winner" && u) {
@@ -476,7 +536,7 @@
 
   // ---------- startup ----------
   function refresh() {
-    return loadData().then(function () { sync(); var a = document.activeElement; if (!a || !$app.contains(a) || !/^(INPUT|SELECT)$/.test(a.tagName)) render(); });
+    return loadData().then(function () { sync(); if (S.modal) return; var a = document.activeElement; if (!a || !$app.contains(a) || !/^(INPUT|SELECT)$/.test(a.tagName)) render(); });
   }
 
   checkStorage();
@@ -486,6 +546,9 @@
   loadData().then(function () { sync(); render(); });
 
   setInterval(function () { if (!document.hidden) refresh(); }, REFRESH_MS);
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && S.modal) { S.modal = null; render(); }
+  });
   document.addEventListener("visibilitychange", function () {
     if (!document.hidden && Date.now() - S.lastLoad > 5 * 60 * 1000) refresh();
   });

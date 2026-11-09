@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1050 680" preserveAspectRatio="xMidYMid slice">
+<g fill="none" stroke="#ffffff" stroke-width="3.5" stroke-opacity=".38">
+<rect x="40" y="40" width="970" height="600"/>
+<line x1="525" y1="40" x2="525" y2="640"/>
+<circle cx="525" cy="340" r="91.5"/>
+<rect x="40" y="138.5" width="165" height="403"/>
+<rect x="845" y="138.5" width="165" height="403"/>
+<rect x="40" y="248.5" width="55" height="183"/>
+<rect x="955" y="248.5" width="55" height="183"/>
+<path d="M205 266.9 A91.5 91.5 0 0 1 205 413.1"/>
+<path d="M845 413.1 A91.5 91.5 0 0 1 845 266.9"/>
+<path d="M40 60 A20 20 0 0 0 60 40"/>
+<path d="M990 40 A20 20 0 0 0 1010 60"/>
+<path d="M60 640 A20 20 0 0 0 40 620"/>
+<path d="M1010 620 A20 20 0 0 0 990 640"/>
+</g>
+<g fill="#ffffff" fill-opacity=".38"><circle cx="525" cy="340" r="6"/><circle cx="150" cy="340" r="5"/><circle cx="900" cy="340" r="5"/></g>
+</svg>
