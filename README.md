@@ -32,6 +32,7 @@ Players choose a nickname (no password) and everything is saved in their own bro
 
 ## Rules (all in `js/scoring.js`)
 - Start with 100 tokens. If you fall below 5 you get a free top-up to 25, at most once a week.
+- Daily bonus: the first bet you place each day (match or season winner) earns +10 tokens. If you cancel your only bet of the day, the bonus is taken back.
 - Match bet: stake 5, 10, 15, 20 or 25. Total goal error = goals off, summed over both teams.
   - Exact score pays 2x (3x in high-stakes matches), 1 goal off 1.5x, 2 off 0.5x, 3 or more loses the stake.
   - If you get the win/draw/loss wrong, the multiplier is capped at 0.5x.
@@ -39,6 +40,12 @@ Players choose a nickname (no password) and everything is saved in their own bro
 - High-stakes matches: listed derbies and rivalries, top-6 clashes in domestic leagues, Champions League/World Cup knockouts and finals.
 - Cup knockouts settle on the score after extra time (penalty shootout goals excluded).
 - Season winner: one locked pick per league. Multiplier is fixed when you place it: 1.5x for the leader up to 15x for ranks 7 and lower, reduced by up to 50% as the season goes on (never below 1.1x). Picks close once 80% of the matches are played. Tokens stay staked until the season ends.
+
+## Features
+- **Know Stats** (on every match card, left of Bet Now): opens a page with both teams' table position, points, played, W/D/L, goals for/against, the last 5 results as W/D/L dots with scores, and a mini league table around both teams (with a button for the full table). Everything is worked out from `data/data.json`, using matches of that competition only.
+- **Kickoff countdown** on upcoming match cards.
+- **Badges and streaks** (Stats tab): 20 badges in `js/game.js` (the `BADGES` list). A streak counts settled bets in a row where you called the win/draw/loss correctly.
+- **My bets filters**: by league and by Open / Won / Lost.
 
 ## Development
 ```

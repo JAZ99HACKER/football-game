@@ -112,10 +112,39 @@ test("full session through the UI", async () => {
   assert.doesNotMatch(app.innerHTML, /role="dialog"/);
   assert.match(app.innerHTML, /class="crest ph"/); // teams without a crest get a badge
 
+  // every card with known teams has Know Stats, just left of Bet Now; undecided teams have none
+  assert.match(app.innerHTML, /data-action="know-stats" data-comp="PD" data-match="1"><span aria-hidden="true">📊<\/span> Know Stats<\/button><button class="btn bet-btn" data-action="open-bet" data-comp="PD" data-match="1">/);
+  assert.doesNotMatch(app.innerHTML, /data-action="know-stats" data-comp="PD" data-match="4"/);
+  assert.match(app.innerHTML, /Kicks off in/); // kickoff countdown on upcoming matches
+
+  // Know Stats opens a page for the match (Sevilla v Girona, finished 1-1) with a Back button
+  click({ action: "know-stats", comp: "PD", match: "3" });
+  assert.match(app.innerHTML, /Back to matches/);
+  assert.match(app.innerHTML, /Know Stats<\/h2>/);
+  assert.match(app.innerHTML, /rankbig">#4 /); // Sevilla is 4th in the test table
+  assert.match(app.innerHTML, /rankbig">#3 /); // Girona is 3rd
+  assert.match(app.innerHTML, /class="dot d latest"/); // last result was a draw
+  assert.match(app.innerHTML, /1 of 3 points/);
+  assert.match(app.innerHTML, /class="minitable"/);
+  assert.match(app.innerHTML, /class="hl home"/);
+  assert.doesNotMatch(app.innerHTML, /data-action="open-bet"/); // no betting from the stats page
+  click({ action: "close-stats" });
+  assert.doesNotMatch(app.innerHTML, /Back to matches/);
+  assert.match(app.innerHTML, /Bet Now/);
+  // a team with no matches played yet, Escape to go back, and a tab click also leaves the page
+  click({ action: "know-stats", comp: "PD", match: "1" });
+  assert.match(app.innerHTML, /No matches played yet in this competition/);
+  docHandlers.keydown({ key: "Escape" });
+  assert.doesNotMatch(app.innerHTML, /Back to matches/);
+  click({ action: "know-stats", comp: "PD", match: "1" });
+  click({ action: "tab", tab: "matches" });
+  assert.doesNotMatch(app.innerHTML, /Back to matches/);
+
   // Bet Now opens the popup for the Clasico (match 1)
   click({ action: "open-bet", comp: "PD", match: "1" });
   assert.match(app.innerHTML, /role="dialog"/);
   assert.match(app.innerHTML, /Place your bet/);
+  assert.match(app.innerHTML, /Your first bet today earns \+10 bonus tokens/);
   assert.match(app.innerHTML, /High stakes: El Clasico/);
   assert.match(app.innerHTML, /name="stake" value="10" checked/);
 
@@ -137,7 +166,9 @@ test("full session through the UI", async () => {
   // place the bet from the popup
   click({ action: "open-bet", comp: "PD", match: "1" });
   submit({ form: "bet", comp: "PD", match: "1" }, { elements: { h: { value: "2" }, a: { value: "1" }, stake: { value: "20" } } });
-  assert.equal(user().tokens, 80);
+  assert.equal(user().tokens, 90); // 100 - 20 stake + 10 daily bonus
+  assert.match(toastEl.textContent, /daily bonus/);
+  assert.match(toastEl.textContent, /New badge: Kick-off/);
   assert.doesNotMatch(app.innerHTML, /role="dialog"/); // popup closes after placing
   assert.match(app.innerHTML, /Your pick: <strong>2–1<\/strong>/);
   assert.match(app.innerHTML, /Change bet/);
@@ -153,22 +184,35 @@ test("full session through the UI", async () => {
   // blank score is refused, nothing changes
   submit({ form: "bet", comp: "PD", match: "2" }, { elements: { h: { value: "" }, a: { value: "1" }, stake: { value: "5" } } });
   assert.equal(toastEl.className, "toast error");
-  assert.equal(user().tokens, 80);
+  assert.equal(user().tokens, 90);
 
   // winner tab: place a pick
   click({ action: "tab", tab: "winner" });
   assert.match(app.innerHTML, /Season progress/);
   assert.match(app.innerHTML, /Champion<select/);
   submit({ form: "winner", comp: "PD" }, { elements: { team: { value: "86" }, stake: { value: "30" } } });
-  assert.equal(user().tokens, 50);
+  assert.equal(user().tokens, 60);
   assert.match(app.innerHTML, /Your pick: <strong>Real Madrid CF<\/strong>/);
 
   // bets tab, stats tab, switch league chip
   click({ action: "tab", tab: "bets" });
   assert.match(app.innerHTML, /Season winner: Real Madrid CF/);
   assert.match(app.innerHTML, /Real Madrid v Barça/);
+  // My bets filters
+  click({ action: "bet-status", val: "won" });
+  assert.match(app.innerHTML, /No bets match these filters/);
+  click({ action: "bet-status", val: "open" });
+  assert.match(app.innerHTML, /Real Madrid v Barça/);
+  assert.match(app.innerHTML, /Showing 2 of 2 bets/);
+  click({ action: "bet-comp", val: "PD" });
+  assert.match(app.innerHTML, /Season winner: Real Madrid CF/);
+  click({ action: "bet-status", val: "all" });
+  click({ action: "bet-comp", val: "all" });
   click({ action: "tab", tab: "stats" });
   assert.match(app.innerHTML, /Recent token history/);
+  assert.match(app.innerHTML, /Badges/);
+  assert.match(app.innerHTML, /1 of 20 earned/);
+  assert.match(app.innerHTML, /Right-result streak/);
   assert.match(app.innerHTML, /Download backup/);
   click({ action: "tab", tab: "matches" });
   click({ action: "comp", comp: "PL" });
@@ -190,7 +234,7 @@ test("full session through the UI", async () => {
   click({ action: "comp", comp: "PD" });
   const betId = user().bets[0].id;
   click({ action: "cancel-bet", bet: betId });
-  assert.equal(user().tokens, 70); // 50 after the winner pick + 20 refunded
+  assert.equal(user().tokens, 80); // 60 after the winner pick + 20 refunded (the winner bet keeps today's bonus)
 
   // switching player returns to the login screen with the player listed
   click({ action: "switch" });
@@ -202,7 +246,7 @@ test("full session through the UI", async () => {
   click({ action: "tab", tab: "matches" });
   click({ action: "comp", comp: "PD" });
   submit({ form: "bet", comp: "PD", match: "2" }, { elements: { h: { value: "1" }, a: { value: "0" }, stake: { value: "10" } } });
-  assert.equal(user().tokens, 60);
+  assert.equal(user().tokens, 70);
 
   // the match finishes; settle with the new data (Girona v Sevilla is a top-6 clash, so an exact pick pays 3x)
   data.competitions.PD.matches[1].status = "FINISHED";
@@ -215,7 +259,7 @@ test("full session through the UI", async () => {
   const u = user();
   const events = Game.settleAll(u, JSON.parse(JSON.stringify(data)), Date.now());
   assert.equal(events.length, 1);
-  assert.equal(u.tokens, 90); // 60 + 30 payout
+  assert.equal(u.tokens, 100); // 70 + 30 payout
 
   // a backup containing a hostile nickname must be escaped everywhere it is shown
   const evil = Game.newUser("<script>alert(1)</script>", ["PD"], Date.now());

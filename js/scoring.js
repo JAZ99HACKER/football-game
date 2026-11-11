@@ -12,6 +12,7 @@
     topUpBelow: 5,
     topUpTo: 25,
     topUpEveryDays: 7,
+    dailyBonus: 10, // free tokens for the first bet placed each day
     // Match bet multipliers by total goal error
     multExact: 2,
     multExactHigh: 3,
@@ -195,6 +196,7 @@
   return {
     RULES: RULES,
     RIVALRIES: RIVALRIES,
+    NON_KNOCKOUT_STAGES: NON_KNOCKOUT_STAGES,
     round1: round1,
     norm: norm,
     totalError: totalError,

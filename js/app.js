@@ -21,6 +21,11 @@
     comp: null,
     more: {},
     modal: null,   // { comp, matchId } while the bet popup is open
+    stats: null,   // { comp, matchId } while the Know Stats page is open
+    statsFull: false, // show the whole table on the stats page
+    statsHist: false, // the stats page has its own browser-history entry
+    scrollBack: 0,    // scroll position to return to from the stats page
+    bf: { comp: "all", status: "all" }, // My bets filters
     storageOk: true,
     lastLoad: 0
   };
@@ -48,6 +53,24 @@
   function cls(n) { return n > 0 ? "pos" : n < 0 ? "neg" : ""; }
   function ball(extra) {
     return '<img class="ball' + (extra ? " " + extra : "") + '" src="img/ball.svg" alt="" aria-hidden="true">';
+  }
+  function fmtShort(iso) {
+    return new Date(iso).toLocaleDateString([], { day: "numeric", month: "short" });
+  }
+  function kickText(ms) {
+    return ms > 0 ? "⏱ Kicks off in " + Game.countdownText(ms) : "⏱ Kick-off!";
+  }
+  function countBadge(m) {
+    var ms = new Date(m.utcDate).getTime() - Date.now();
+    if ((m.status !== "SCHEDULED" && m.status !== "TIMED") || !(ms > 0)) return "";
+    return '<span class="badge count" data-kick="' + esc(m.utcDate) + '">' + kickText(ms) + "</span>";
+  }
+  function badgeNote(list) {
+    return "🏅 New badge" + (list.length > 1 ? "s" : "") + ": " + list.map(function (b) { return b.name; }).join(", ");
+  }
+  function groupLabel(g) {
+    var s = String(g).replace(/_/g, " ").toLowerCase();
+    return s.charAt(0).toUpperCase() + s.slice(1);
   }
 
   var STAGES = {
@@ -101,6 +124,8 @@
     var now = Date.now(), notes = [];
     if (Game.applyTopUp(u, now)) notes.push("Free top-up: your balance is back to " + R.topUpTo + " tokens.");
     Game.settleAll(u, S.data, now).forEach(function (e) { notes.push(e); });
+    var fresh = Game.updateBadges(u, now);
+    if (fresh.length) notes.push(badgeNote(fresh));
     if (notes.length) { save(); toast(notes.join(" · "), "ok"); }
   }
 
@@ -192,7 +217,7 @@
     var finished = m.status === "FINISHED" && m.score;
     var reason = finished ? null : Scoring.highStakesReason(m, comp, rank, R);
     var high = bet ? bet.high : !!reason;
-    var tags = '<span>' + esc(fmtDate(m.utcDate)) + "</span>";
+    var tags = '<span>' + esc(fmtDate(m.utcDate)) + "</span>" + countBadge(m);
     var rl = roundLabel(m);
     if (rl) tags += '<span class="badge">' + esc(rl) + "</span>";
     if (high) tags += '<span class="badge high" title="Exact score pays ' + mult(R.multExactHigh) + '">★ High stakes' +
@@ -204,16 +229,22 @@
 
     var foot = "";
     if (bet) foot += betSummary(bet);
+    var btns = "";
+    if (m.home.id != null && m.away.id != null) {
+      // Know Stats comes first, just left of Bet Now
+      btns += '<button class="btn ghost stats-btn" data-action="know-stats" data-comp="' + esc(comp.code) + '" data-match="' + m.id + '"><span aria-hidden="true">📊</span> Know Stats</button>';
+    }
     if (Game.canBet(m, Date.now())) {
       var affordable = u.tokens + (openBet ? openBet.stake : 0) >= R.stakes[0];
-      if (!affordable) foot += '<button class="btn bet-btn" disabled>Not enough tokens</button>';
-      else foot += '<button class="btn bet-btn" data-action="open-bet" data-comp="' + esc(comp.code) + '" data-match="' + m.id + '">' +
+      if (!affordable) btns += '<button class="btn bet-btn" disabled>Not enough tokens</button>';
+      else btns += '<button class="btn bet-btn" data-action="open-bet" data-comp="' + esc(comp.code) + '" data-match="' + m.id + '">' +
         ball("btn-ball") + (openBet ? "Change bet" : "Bet Now") + "</button>";
     } else if (!finished && (m.home.id == null || m.away.id == null)) {
       foot += '<p class="hint">Teams not decided yet.</p>';
     } else if (!finished && m.status !== "POSTPONED" && m.status !== "CANCELLED") {
-      foot += '<button class="btn bet-btn" disabled>Betting closed</button>';
+      btns += '<button class="btn bet-btn" disabled>Betting closed</button>';
     }
+    if (btns) foot += '<div class="actions">' + btns + "</div>";
 
     return '<article class="card match' + (high ? " high" : "") + '"><div class="meta">' + tags + "</div>" +
       '<div class="teams"><div class="team">' + crest(m.home) + "<span>" + esc(m.home.name || "TBD") + "</span></div>" + mid +
@@ -261,11 +292,138 @@
       '<div class="sb-dash">–</div>' +
       '<div class="sb-col"><div class="sb-team">' + crest(m.away) + "<span>" + esc(m.away.name) + "</span></div>" + stepper("a", m.away.short || m.away.name, openBet ? openBet.pickAway : 0) + "</div></div>" +
       '<p class="stakes-label">Choose your stake (tokens)</p><div class="stakes">' + chips + "</div>" +
+      (Game.dailyClaimed(u, Date.now()) ? "" : '<p class="hint">🎁 Your first bet today earns +' + R.dailyBonus + " bonus tokens.</p>") +
       '<div class="payouts"><span class="badge">Exact score <b>' + mult(high ? R.multExactHigh : R.multExact) + '</b></span><span class="badge">1 goal off <b>' + mult(R.multOff1) +
       '</b></span><span class="badge">2 goals off <b>' + mult(R.multOff2) + '</b></span><span class="badge">Further off <b>lose stake</b></span></div>' +
       '<div class="row"><button class="btn" type="submit">' + ball("btn-ball") + (openBet ? "Update bet" : "Place bet") + "</button>" +
       (openBet ? '<button type="button" class="btn danger" data-action="cancel-bet" data-bet="' + esc(openBet.id) + '">Cancel bet</button>' : "") +
       '<button type="button" class="btn ghost" data-action="close-modal">Close</button></div></form></div></div>';
+  }
+
+  // ---------- Know Stats page ----------
+  function formDot(r, small, latest) {
+    var word = r.res === "W" ? "Win" : r.res === "D" ? "Draw" : "Loss";
+    var label = word + ", " + r.gf + "–" + r.ga + (r.home ? " at home to " : " away at ") + (r.opp.short || r.opp.name || "?");
+    return '<span class="dot ' + r.res.toLowerCase() + (small ? " sm" : "") + (latest ? " latest" : "") + '" title="' + esc(label) + '" aria-label="' + esc(label) + '">' + r.res + "</span>";
+  }
+  function formDots(list, small) {
+    if (!list.length) return '<span class="muted">–</span>';
+    return '<span class="form">' + list.map(function (r, i) { return formDot(r, small, i === list.length - 1); }).join("") + "</span>";
+  }
+
+  function teamCard(v, side) {
+    var rank = v.position != null
+      ? '<div class="rankbig">#' + v.position + ' <span class="muted">' + (v.groupName ? "in " + esc(groupLabel(v.groupName)) : "of " + v.tableSize) + "</span></div>"
+      : '<div class="muted">Not in the table yet</div>';
+    var cells = [["Pts", v.points], ["P", v.played], ["W", v.w], ["D", v.d], ["L", v.l], ["GF", v.gf], ["GA", v.ga], ["GD", signed(v.gd)]];
+    var grid = '<div class="sgrid">' + cells.map(function (c) { return "<div><b>" + esc(c[1]) + "</b><span>" + c[0] + "</span></div>"; }).join("") + "</div>";
+
+    var recent = v.form.slice().reverse();
+    var last = !v.form.length
+      ? '<p class="muted">No matches played yet in this competition.</p>'
+      : '<p class="formline"><span class="muted">Form, oldest → latest</span>' + formDots(v.form) + "</p>" +
+        '<p class="hint" style="margin:.1rem 0 .5rem">Last ' + v.form.length + ": " + v.form.filter(function (r) { return r.res === "W"; }).length + "W " +
+        v.form.filter(function (r) { return r.res === "D"; }).length + "D " + v.form.filter(function (r) { return r.res === "L"; }).length + "L · " +
+        v.formPts + " of " + v.form.length * 3 + " points</p>" +
+        '<ul class="last5" aria-label="Last matches, latest first">' + recent.map(function (r) {
+          return "<li>" + formDot(r, true) + '<span class="when muted">' + esc(fmtShort(r.date)) + " · " + (r.home ? "H" : "A") + "</span>" +
+            '<span class="opp">vs <strong>' + esc(r.opp.short || r.opp.name || "?") + '</strong></span><span class="sc">' + r.gf + "–" + r.ga + "</span></li>";
+        }).join("") + "</ul>";
+
+    return '<section class="card tcard"><div class="tname">' + crest(v.team) + "<span>" + esc(v.team.name) + '</span><span class="badge">' + side + "</span></div>" +
+      rank + grid + last + "</section>";
+  }
+
+  function miniTable(t) {
+    var body = t.rows.map(function (r) {
+      if (r.gap) return '<tr class="gap"><td colspan="9" aria-hidden="true">⋯</td></tr>';
+      var tag = r.side ? ' <span class="badge" title="' + (r.side === "home" ? "Home team" : "Away team") + '">' + (r.side === "home" ? "H" : "A") + "</span>" : "";
+      return '<tr class="' + (r.side ? "hl " + r.side : "") + '"><td>' + r.position + '</td><td class="tm">' + crest(r.team) + "<span>" + esc(r.team.short || r.team.name) + "</span>" + tag + "</td>" +
+        '<td class="num">' + r.played + '</td><td class="num">' + r.w + '</td><td class="num">' + r.d + '</td><td class="num">' + r.l + '</td><td class="num">' + signed(r.gd) +
+        '</td><td class="num"><b>' + r.points + "</b></td><td>" + formDots(r.form, true) + "</td></tr>";
+    }).join("");
+    return (t.group ? '<h3 class="tgroup">' + esc(groupLabel(t.group)) + "</h3>" : "") +
+      '<div class="card table-wrap"><table class="minitable"><thead><tr><th>#</th><th>Team</th><th class="num">P</th><th class="num">W</th><th class="num">D</th><th class="num">L</th>' +
+      '<th class="num">GD</th><th class="num">Pts</th><th>Form</th></tr></thead><tbody>' + body + "</tbody></table></div>";
+  }
+
+  // The page behind the "Know Stats" button. Returns null when the match is no longer available.
+  function renderStatsPage(u) {
+    var ref = S.stats;
+    var comp = S.data.competitions[ref.comp];
+    var m = comp ? Game.findMatch(S.data, ref.comp, ref.matchId) : null;
+    if (!m || m.home.id == null || m.away.id == null) { S.stats = null; return null; }
+    var pv = Game.matchPreview(comp, m, S.statsFull);
+    var finished = m.status === "FINISHED" && m.score;
+    var bet = findBet(u, comp.code, m.id);
+    var reason = finished ? null : Scoring.highStakesReason(m, comp, Scoring.rankMap(comp), R);
+    var high = bet ? bet.high : !!reason;
+
+    var tags = "<span>" + esc(fmtDate(m.utcDate)) + "</span>" + countBadge(m) + '<span class="badge">' + esc(comp.name) + "</span>";
+    var rl = roundLabel(m);
+    if (rl) tags += '<span class="badge">' + esc(rl) + "</span>";
+    if (high) tags += '<span class="badge high">★ High stakes' + ((bet && bet.highReason) || reason ? ": " + esc((bet && bet.highReason) || reason) : "") + "</span>";
+    var mid = finished ? '<span class="score">' + m.score.home + " – " + m.score.away + "</span>" : '<span class="vs">' + ball() + "</span>";
+
+    var html = '<div class="backrow"><button class="btn ghost" data-action="close-stats">← Back to matches</button></div>' +
+      '<article class="card match' + (high ? " high" : "") + '"><div class="meta">' + tags + "</div>" +
+      '<div class="teams"><div class="team">' + crest(m.home) + "<span>" + esc(m.home.name) + "</span></div>" + mid +
+      '<div class="team right"><span>' + esc(m.away.name) + "</span>" + crest(m.away) + "</div></div>" +
+      (bet ? '<div class="match-foot">' + betSummary(bet) + "</div>" : "") + "</article>" +
+      '<h2 class="section-title">Know Stats</h2><div class="vs-grid">' + teamCard(pv.home, "Home") + teamCard(pv.away, "Away") + "</div>" +
+      '<h2 class="section-title">League table</h2>';
+
+    if (!pv.tables.length) html += '<div class="empty">The table is not available yet.</div>';
+    else {
+      html += pv.tables.map(miniTable).join("");
+      var shown = pv.tables.reduce(function (n, t) { return n + t.rows.filter(function (r) { return !r.gap; }).length; }, 0);
+      var total = pv.tables.reduce(function (n, t) { return n + t.size; }, 0);
+      if (S.statsFull || shown < total) {
+        html += '<p><button class="btn ghost" data-action="stats-full">' + (S.statsFull ? "Show fewer teams" : "Show full table (" + total + " teams)") + "</button></p>";
+      }
+    }
+    html += '<p class="hint">Stats use ' + esc(comp.name) + " matches only (no other leagues or cups). Scores show the team's own goals first." +
+      (comp.kind === "cup" ? " Points, W/D/L and goals cover the league or group phase; the form dots include every round." : "") + "</p>" +
+      '<div class="backrow" style="margin-top:1rem"><button class="btn ghost" data-action="close-stats">← Back to matches</button></div>';
+    return html;
+  }
+
+  function openStats(comp, matchId) {
+    S.scrollBack = window.pageYOffset || 0;
+    S.stats = { comp: comp, matchId: matchId };
+    S.statsFull = false;
+    try {
+      if (window.history && window.history.pushState) { window.history.pushState({ fpgStats: 1 }, ""); S.statsHist = true; }
+    } catch (e) { S.statsHist = false; }
+    render(); window.scrollTo(0, 0);
+  }
+  function closeStats() { S.stats = null; S.statsHist = false; render(); window.scrollTo(0, S.scrollBack || 0); }
+  // The Back button uses the browser history, so the phone's own back button does the same thing.
+  function backFromStats() {
+    if (S.statsHist && window.history && window.history.back) window.history.back();
+    else closeStats();
+  }
+  // Leaving the page some other way (another tab, switching player).
+  function leaveStats() {
+    if (!S.stats) return;
+    S.stats = null;
+    if (S.statsHist) { S.statsHist = false; try { window.history.back(); } catch (e) { /* ignore */ } }
+  }
+
+  // ---------- badges ----------
+  function badgesSection(u) {
+    var list = Game.badgeStatus(u);
+    var earned = list.filter(function (b) { return b.earned; });
+    var locked = list.filter(function (b) { return !b.earned; });
+    function card(b) {
+      var note = b.earned
+        ? '<div class="b-note">Earned' + (b.earnedAt ? " " + esc(fmtShort(b.earnedAt)) : "") + "</div>"
+        : (b.need > 1 ? '<div class="b-note">' + b.have + " / " + b.need + '</div><div class="progress thin"><div style="width:' + Math.round(b.have / b.need * 100) + '%"></div></div>' : "");
+      return '<div class="bcard ' + (b.earned ? "earned" : "locked") + '"><div class="b-icon" aria-hidden="true">' + b.icon + '</div><div class="b-text"><strong>' +
+        esc(b.name) + '</strong><div class="b-desc">' + esc(b.desc) + "</div>" + note + "</div></div>";
+    }
+    return '<h2 class="section-title">Badges <span class="muted" style="text-transform:none;letter-spacing:0">' + earned.length + " of " + list.length + " earned</span></h2>" +
+      '<div class="badges">' + earned.concat(locked).map(card).join("") + "</div>";
   }
 
   function renderMatches(u) {
@@ -347,9 +505,7 @@
 
   function renderBets(u) {
     function byKick(a, b) { return new Date(a.kickoff) - new Date(b.kickoff); }
-    var open = u.bets.filter(function (b) { return b.status === "open"; }).sort(byKick);
-    var done = u.bets.filter(function (b) { return b.status !== "open"; }).sort(function (a, b) { return byKick(b, a); });
-    function card(b) {
+    function mCard(b) {
       var right = "";
       if (b.status === "settled") {
         right = "Final " + b.result.home + "–" + b.result.away + " · " + mult(b.multiplier) + ' <span class="badge ' + (b.net > 0 ? "win" : b.net < 0 ? "loss" : "") + '">' + signed(b.net) + "</span>";
@@ -359,32 +515,65 @@
         "<div>Pick " + b.pickHome + "–" + b.pickAway + " · stake " + tok(b.stake) + (b.high ? ' <span class="badge high">★ ' + esc(b.highReason || "High stakes") + "</span>" : "") + "</div>" +
         '<div class="muted">' + right + "</div></div>";
     }
-    function wcard(b) {
+    function wCard(b) {
       var right = b.status === "settled" ? '<span class="badge ' + (b.won ? "win" : "loss") + '">' + (b.won ? "Won " : "Lost ") + signed(b.net) + "</span>"
         : b.status === "refunded" ? '<span class="badge">Refunded</span>' : "Waiting for the season to finish";
       return '<div class="card"><strong>Season winner: ' + esc(b.teamName) + '</strong> <span class="muted">· ' + esc(compName(b.comp)) + "</span>" +
         "<div>Stake " + tok(b.stake) + " · locked " + mult(b.multiplier) + '</div><div class="muted">' + right + "</div></div>";
     }
     if (!u.bets.length && !u.winnerBets.length) return '<div class="empty">No bets yet. Head to Matches or Season winner to place one.</div>';
-    var html = "";
-    if (open.length || u.winnerBets.some(function (b) { return b.status === "open"; })) {
-      html += '<h2 class="section-title">Open</h2>' +
-        u.winnerBets.filter(function (b) { return b.status === "open"; }).map(wcard).join("") + open.map(card).join("");
+
+    // filters: league and result
+    var codes = [];
+    u.bets.concat(u.winnerBets).forEach(function (b) { if (codes.indexOf(b.comp) === -1) codes.push(b.comp); });
+    codes.sort(function (a, b) {
+      var ia = COMP_ORDER.indexOf(a), ib = COMP_ORDER.indexOf(b);
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    });
+    if (S.bf.comp !== "all" && codes.indexOf(S.bf.comp) === -1) S.bf.comp = "all";
+    function chip(action, val, label, on) {
+      return '<button class="chip" aria-pressed="' + on + '" data-action="' + action + '" data-val="' + esc(val) + '">' + esc(label) + "</button>";
     }
-    if (done.length || u.winnerBets.some(function (b) { return b.status !== "open"; })) {
-      html += '<h2 class="section-title">Settled</h2>' +
-        u.winnerBets.filter(function (b) { return b.status !== "open"; }).map(wcard).join("") + done.map(card).join("");
+    var filters = '<div class="chips">' + chip("bet-comp", "all", "All leagues", S.bf.comp === "all") +
+      codes.map(function (c) { return chip("bet-comp", c, compName(c), S.bf.comp === c); }).join("") + "</div>" +
+      '<div class="chips">' + [["all", "All"], ["open", "Open"], ["won", "Won"], ["lost", "Lost"]].map(function (s) {
+        return chip("bet-status", s[0], s[1], S.bf.status === s[0]);
+      }).join("") + "</div>";
+
+    function okComp(b) { return S.bf.comp === "all" || b.comp === S.bf.comp; }
+    function okMatch(b) {
+      var st = S.bf.status;
+      return st === "all" || (st === "open" && b.status === "open") || (st === "won" && b.status === "settled" && b.net > 0) || (st === "lost" && b.status === "settled" && b.net < 0);
     }
+    function okWinner(b) {
+      var st = S.bf.status;
+      return st === "all" || (st === "open" && b.status === "open") || (st === "won" && b.status === "settled" && b.won) || (st === "lost" && b.status === "settled" && !b.won);
+    }
+    var mine = u.bets.filter(function (b) { return okComp(b) && okMatch(b); });
+    var wins = u.winnerBets.filter(function (b) { return okComp(b) && okWinner(b); });
+    var open = mine.filter(function (b) { return b.status === "open"; }).sort(byKick);
+    var done = mine.filter(function (b) { return b.status !== "open"; }).sort(function (a, b) { return byKick(b, a); });
+    var wOpen = wins.filter(function (b) { return b.status === "open"; });
+    var wDone = wins.filter(function (b) { return b.status !== "open"; });
+
+    var html = filters;
+    if (!mine.length && !wins.length) return html + '<div class="empty">No bets match these filters.</div>';
+    html += '<p class="hint" style="margin:0 0 .5rem">Showing ' + (mine.length + wins.length) + " of " + (u.bets.length + u.winnerBets.length) + " bets.</p>";
+    if (open.length || wOpen.length) html += '<h2 class="section-title">Open</h2>' + wOpen.map(wCard).join("") + open.map(mCard).join("");
+    if (done.length || wDone.length) html += '<h2 class="section-title">Settled</h2>' + wDone.map(wCard).join("") + done.map(mCard).join("");
     return html;
   }
 
   function renderStats(u) {
-    var s = Game.stats(u);
+    var s = Game.stats(u), st = Game.streaks(u);
     function m(label, value, c) { return '<div class="metric"><b class="' + (c || "") + '">' + value + "</b><span>" + label + "</span></div>"; }
     var html = '<div class="metrics">' +
       m("Balance", tok(s.balance)) + m("Staked in open bets", tok(s.openStake)) + m("Bets settled", s.settled) +
       m("Bets in profit", s.hitRate == null ? "–" : s.hitRate + "%") + m("Exact scores", s.exact) +
-      m("Net from matches", signed(s.netMatch), cls(s.netMatch)) + m("Net from season picks", signed(s.netWinner), cls(s.netWinner)) + "</div>";
+      m("Net from matches", signed(s.netMatch), cls(s.netMatch)) + m("Net from season picks", signed(s.netWinner), cls(s.netWinner)) +
+      m("Right-result streak", st.right.current) + m("Best streak", st.right.best) + "</div>" +
+      '<p class="hint" style="margin:-.4rem 0 0">A streak counts settled bets in a row where you called the win, draw or loss correctly.</p>' +
+      badgesSection(u);
 
     var codes = Object.keys(s.byLeague);
     if (codes.length) {
@@ -414,7 +603,8 @@
   }
 
   function renderGame(u) {
-    var body = S.tab === "winner" ? renderWinner(u) : S.tab === "bets" ? renderBets(u) : S.tab === "stats" ? renderStats(u) : renderMatches(u);
+    var body = S.stats ? renderStatsPage(u) : null;
+    if (body === null) body = S.tab === "winner" ? renderWinner(u) : S.tab === "bets" ? renderBets(u) : S.tab === "stats" ? renderStats(u) : renderMatches(u);
     var updated = S.data.fetchedAt ? "Scores last changed " + fmtDay(S.data.fetchedAt) + "." : "";
     return '<div class="shell">' + renderHeader(u) + notices() + body +
       '<p class="footer">Game tokens only: no real money is involved. ' + updated + " Football data from football-data.org. Scores can be delayed.</p></div>";
@@ -431,7 +621,7 @@
   }
 
   // ---------- actions ----------
-  function afterLogin() { S.tab = "matches"; S.comp = null; S.modal = null; save(); sync(); render(); window.scrollTo(0, 0); }
+  function afterLogin() { leaveStats(); S.tab = "matches"; S.comp = null; S.modal = null; save(); sync(); render(); window.scrollTo(0, 0); }
 
   function guarded(fn) {
     try { fn(); } catch (err) { toast(err.message, "error"); }
@@ -452,14 +642,25 @@
         input.value = Math.max(0, Math.min(R.maxGoals, cur + Number(el.dataset.delta)));
       }
     }
+    else if (a === "know-stats") { openStats(el.dataset.comp, Number(el.dataset.match)); }
+    else if (a === "close-stats") { backFromStats(); }
+    else if (a === "stats-full") { S.statsFull = !S.statsFull; render(); }
+    else if (a === "bet-comp") { S.bf.comp = el.dataset.val; render(); }
+    else if (a === "bet-status") { S.bf.status = el.dataset.val; render(); }
     else if (a === "login-as") { S.nick = el.dataset.nick; afterLogin(); }
     else if (a === "signup-back") { S.signup = null; render(); }
-    else if (a === "switch") { S.nick = null; S.modal = null; save(); render(); }
-    else if (a === "tab") { S.tab = el.dataset.tab; render(); window.scrollTo(0, 0); }
+    else if (a === "switch") { leaveStats(); S.nick = null; S.modal = null; save(); render(); }
+    else if (a === "tab") { leaveStats(); S.tab = el.dataset.tab; render(); window.scrollTo(0, 0); }
     else if (a === "comp") { S.comp = el.dataset.comp; render(); }
     else if (a === "more") { S.more[S.comp] = (S.more[S.comp] || STEP) + STEP; render(); }
     else if (a === "cancel-bet") {
-      guarded(function () { Game.cancelMatchBet(u, S.data, el.dataset.bet, Date.now()); S.modal = null; save(); render(); toast("Bet cancelled and stake refunded."); });
+      guarded(function () {
+        var had = Game.dailyClaimed(u, Date.now());
+        Game.cancelMatchBet(u, S.data, el.dataset.bet, Date.now());
+        var lost = had && !Game.dailyClaimed(u, Date.now());
+        S.modal = null; save(); render();
+        toast("Bet cancelled and stake refunded." + (lost ? " The daily bonus was taken back because you have no other bet today." : ""));
+      });
     } else if (a === "export") {
       var blob = new Blob([Game.exportAll(S.users)], { type: "application/json" });
       var link = document.createElement("a");
@@ -519,17 +720,24 @@
       guarded(function () {
         var hv = f.elements.h.value.trim(), av = f.elements.a.value.trim();
         if (hv === "" || av === "") throw new Error("Enter a score for both teams.");
+        var had = Game.dailyClaimed(u, Date.now());
         var bet = Game.placeMatchBet(u, S.data, {
           comp: f.dataset.comp, matchId: Number(f.dataset.match), pickHome: Number(hv), pickAway: Number(av), stake: Number(f.elements.stake.value)
         }, Date.now());
+        var got = !had && Game.dailyClaimed(u, Date.now());
+        var fresh = Game.updateBadges(u, Date.now());
         S.modal = null; save(); render();
-        toast("Bet placed: " + bet.home + " " + bet.pickHome + "–" + bet.pickAway + " " + bet.away + ", stake " + bet.stake + (bet.high ? " (high stakes)." : "."));
+        toast("Bet placed: " + bet.home + " " + bet.pickHome + "–" + bet.pickAway + " " + bet.away + ", stake " + bet.stake + (bet.high ? " (high stakes)." : ".") +
+          (got ? " 🎁 +" + R.dailyBonus + " daily bonus!" : "") + (fresh.length ? " " + badgeNote(fresh) : ""));
       });
     } else if (kind === "winner" && u) {
       guarded(function () {
+        var had = Game.dailyClaimed(u, Date.now());
         var bet = Game.placeWinnerBet(u, S.data, { comp: f.dataset.comp, teamId: Number(f.elements.team.value), stake: Number(f.elements.stake.value) }, Date.now());
+        var got = !had && Game.dailyClaimed(u, Date.now());
+        var fresh = Game.updateBadges(u, Date.now());
         save(); render();
-        toast("Locked in " + bet.teamName + " at " + mult(bet.multiplier) + ".");
+        toast("Locked in " + bet.teamName + " at " + mult(bet.multiplier) + "." + (got ? " 🎁 +" + R.dailyBonus + " daily bonus!" : "") + (fresh.length ? " " + badgeNote(fresh) : ""));
       });
     }
   });
@@ -541,6 +749,7 @@
 
   checkStorage();
   S.users = loadUsers();
+  Object.keys(S.users).forEach(function (k) { Game.normalizeUser(S.users[k]); });
   try { var cur = localStorage.getItem(LS_CUR); if (cur && S.users[cur]) S.nick = cur; } catch (e) { /* ignore */ }
   render();
   loadData().then(function () { sync(); render(); });
@@ -548,7 +757,27 @@
   setInterval(function () { if (!document.hidden) refresh(); }, REFRESH_MS);
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape" && S.modal) { S.modal = null; render(); }
+    else if (e.key === "Escape" && S.stats) backFromStats();
   });
+  // The phone's own back button closes the stats page.
+  if (window.addEventListener) window.addEventListener("popstate", function () { if (S.stats) closeStats(); });
+
+  // Kickoff countdowns: update the text in place every second (no full re-draw).
+  function tickCountdowns() {
+    if (!$app.querySelectorAll) return;
+    var els = $app.querySelectorAll("[data-kick]"), now = Date.now(), started = false;
+    for (var i = 0; i < els.length; i++) {
+      var ms = new Date(els[i].getAttribute("data-kick")).getTime() - now;
+      var text = kickText(ms);
+      if (els[i].textContent !== text) els[i].textContent = text;
+      if (ms <= 0) started = true;
+    }
+    if (started && !S.modal) { // a match just kicked off: redraw so its Bet button closes
+      var a = document.activeElement;
+      if (!a || !$app.contains(a) || !/^(INPUT|SELECT)$/.test(a.tagName)) render();
+    }
+  }
+  setInterval(function () { if (!document.hidden) tickCountdowns(); }, 1000);
   document.addEventListener("visibilitychange", function () {
     if (!document.hidden && Date.now() - S.lastLoad > 5 * 60 * 1000) refresh();
   });
